@@ -1,4 +1,4 @@
 services:
-  create_basemap:
+  create_hillshade:
     build: .
-    command: [".venv/bin/python", "-m", "create_basemap"]
+    command: [".venv/bin/python", "-m", "create_hillshade"]
