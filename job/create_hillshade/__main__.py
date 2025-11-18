@@ -97,9 +97,20 @@ def create_hillshade(bounds: tuple[float, float, float, float], id: str) -> str:
         shell=True,
     )
 
+    cog = f"{folder.name}/hillshade_cog.tif"
+    check_call(
+        f"""gdalwarp \
+            -of COG \
+            -co COMPRESS=ZSTD \
+            {hillshade} \
+            {cog}
+        """,
+        shell=True,
+    )
+
     # Upload it
     check_call(
-        f"gcloud storage cp {hillshade} gs://gee-ramiqcom-s4g-bucket/basemap/hillshade/NASADEM_Hillshade_{id}.tif",
+        f"gcloud storage cp {cog} gs://gee-ramiqcom-s4g-bucket/basemap/hillshade/NASADEM_Hillshade_{id}.tif",
         shell=True,
     )
 
