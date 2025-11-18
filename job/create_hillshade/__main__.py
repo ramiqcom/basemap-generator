@@ -33,7 +33,9 @@ for x in range(-180, 180, 10):
         )
 
 
-def get_dem(bounds: tuple[float, float, float, float], id: str) -> str:
+def get_dem(
+    bounds: tuple[float, float, float, float], id: str, folder_name: str
+) -> str:
     logger.info(f"Generating DEM {id}")
 
     # Processing DEM
@@ -62,16 +64,16 @@ def get_dem(bounds: tuple[float, float, float, float], id: str) -> str:
         folder = TemporaryDirectory(delete=False)
 
         # save input
-        paths_file = f"{folder.name}/paths.txt"
+        paths_file = f"{folder_name}/paths.txt"
         with open(paths_file, "w") as file:
             file.write("\n".join(dem_paths))
 
         # vrt
-        vrt = f"{folder.name}/vrt.vrt"
+        vrt = f"{folder_name}/vrt.vrt"
         check_call(f"gdalbuildvrt input_file_list {paths_file} {vrt}", shell=True)
 
         # Mosaic it
-        dem = f"{folder.name}/dem.tif"
+        dem = f"{folder_name}/dem.tif"
         check_call(
             f"""gdalwarp \
                 -t_srs EPSG:4326 \
@@ -123,22 +125,34 @@ def create_hillshade(bounds: tuple[float, float, float, float], id: str) -> str:
         shell=True,
     )
 
-    return hillshade
+    folder.cleanup()
 
 
 def main():
+    try:
+        # check done
+        done = check_output(
+            "gcloud storage ls gs://gee-ramiqcom-s4g-bucket/basemap/hillshade",
+            shell=True,
+            text=True,
+        ).split("\n")[:-1]
+        done = ["_".join(path.split(".tif")[0].split("_")[-2:]) for path in done]
+    except Exception:
+        done = []
+
     # run with threadpool
     with ThreadPoolExecutor(MAX_WORKERS) as executor:
         jobs = []
         for dict_bounds in bboxes:
             name = dict_bounds["id"]
-            bbox = (
-                dict_bounds["min_x"],
-                dict_bounds["min_y"],
-                dict_bounds["max_x"],
-                dict_bounds["max_y"],
-            )
-            jobs.append(executor.submit(create_hillshade, bbox, name))
+            if name not in done:
+                bbox = (
+                    dict_bounds["min_x"],
+                    dict_bounds["min_y"],
+                    dict_bounds["max_x"],
+                    dict_bounds["max_y"],
+                )
+                jobs.append(executor.submit(create_hillshade, bbox, name))
 
         for job in as_completed(jobs):
             try:
