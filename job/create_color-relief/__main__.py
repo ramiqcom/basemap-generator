@@ -5,6 +5,8 @@ from logging import INFO, basicConfig, getLogger
 from subprocess import check_call, check_output
 from tempfile import TemporaryDirectory
 
+import matplotlib.colors as colors
+
 # Configuration
 MAX_WORKERS = os.cpu_count() or 1  # Thread workers
 
@@ -31,6 +33,20 @@ for x in range(-180, 180, 10):
                 max_y=max_y,
             )
         )
+
+values = [0, 1, 100, 500, 1000, 2000]
+color_list = ["lightskyblue", "lightgreen", "gold", "orange", "sienna", "white"]
+color_text = []
+for index in range(len(values)):
+    value = values[index]
+    rgba = colors.to_rgba(color_list[index])
+    color = " ".join([f"{int(number * 255)}" for number in rgba])
+    color_text.append(f"{value} {color}")
+color_text.append("nv 0 0 0 0")
+folder = TemporaryDirectory(delete=False)
+color_file = f"{folder.name}/color.txt"
+with open(color_file, "w") as file:
+    file.write("\n".join(color_text))
 
 
 def get_dem(bounds: tuple[float, float, float, float], id: str) -> str:
@@ -68,7 +84,7 @@ def get_dem(bounds: tuple[float, float, float, float], id: str) -> str:
 
         # vrt
         vrt = f"{folder.name}/vrt.vrt"
-        check_call(f"gdalbuildvrt input_file_list {paths_file} {vrt}", shell=True)
+        check_call(f"gdalbuildvrt -input_file_list {paths_file} {vrt}", shell=True)
 
         # Mosaic it
         dem = f"{folder.name}/dem.tif"
@@ -88,30 +104,30 @@ def get_dem(bounds: tuple[float, float, float, float], id: str) -> str:
         raise Exception(f"No DEM {id}")
 
 
-def create_hillshade(bounds: tuple[float, float, float, float], id: str) -> str:
+def create_color_relief(bounds: tuple[float, float, float, float], id: str) -> str:
     logger.info(f"Generating hillshade {id}")
 
     folder = TemporaryDirectory(delete=False)
 
     dem = get_dem(bounds, id)
-    hillshade = f"{folder.name}/hillshade.tif"
+    colored = f"{folder.name}/colored.tif"
     check_call(
-        f"""gdaldem hillshade \
-            -z 10 \
-            -s 111120 \
-            -multidirectional \
+        f"""gdaldem color-relief \
+            -of GTiff \
+            -alpha \
             {dem} \
-            {hillshade}
+            {color_file} \
+            {colored}
         """,
         shell=True,
     )
 
-    cog = f"{folder.name}/hillshade_cog.tif"
+    cog = f"{folder.name}/colored_cog.tif"
     check_call(
         f"""gdalwarp \
             -of COG \
             -co COMPRESS=ZSTD \
-            {hillshade} \
+            {colored} \
             {cog}
         """,
         shell=True,
@@ -119,16 +135,14 @@ def create_hillshade(bounds: tuple[float, float, float, float], id: str) -> str:
 
     # Upload it
     check_call(
-        f"gcloud storage cp {cog} gs://gee-ramiqcom-s4g-bucket/basemap/hillshade/NASADEM_Hillshade_{id}.tif",
+        f"gcloud storage cp {cog} gs://gee-ramiqcom-s4g-bucket/basemap/color_relief/NASADEM_Color-Relief_{id}.tif",
         shell=True,
     )
-
-    return hillshade
 
 
 def main():
     # run with threadpool
-    with ThreadPoolExecutor(MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(8) as executor:
         jobs = []
         for dict_bounds in bboxes:
             name = dict_bounds["id"]
@@ -138,7 +152,7 @@ def main():
                 dict_bounds["max_x"],
                 dict_bounds["max_y"],
             )
-            jobs.append(executor.submit(create_hillshade, bbox, name))
+            jobs.append(executor.submit(create_color_relief, bbox, name))
 
         for job in as_completed(jobs):
             try:

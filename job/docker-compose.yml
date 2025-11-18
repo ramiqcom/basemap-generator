@@ -2,3 +2,6 @@ services:
   create_hillshade:
     build: .
     command: [".venv/bin/python", "-m", "create_hillshade"]
+  create_color-relief:
+    build: .
+    command: [".venv/bin/python", "-m", "create_color-relief"]
