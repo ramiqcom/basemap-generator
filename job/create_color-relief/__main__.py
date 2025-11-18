@@ -58,16 +58,16 @@ def get_dem(
     logger.info("Generating DEM")
     dem_info = json.loads(
         check_output(
-            f"""ogrinfo \
-                -spat {bounds[0]} {bounds[1]} {bounds[2]} {bounds[3]} \
-                -json \
-                -features \
-                /vsicurl/https://storage.googleapis.com/gee-ramiqcom-s4g-bucket/collection_tiles/nasadem_tiles.fgb
+            f"""gdal vector pipeline \
+                ! read /vsicurl/https://storage.googleapis.com/gee-ramiqcom-s4g-bucket/collection_tiles/nasadem_tiles.fgb \
+                ! filter --bbox={bounds[0]},{bounds[1]},{bounds[2]},{bounds[3]} \
+                ! info -f json --features
             """,
             shell=True,
             text=True,
         )
     )
+
     dem_tiles = dem_info["layers"][0]["features"]
 
     if len(dem_tiles) > 0:
@@ -82,19 +82,15 @@ def get_dem(
         with open(paths_file, "w") as file:
             file.write("\n".join(dem_paths))
 
-        # vrt
-        vrt = f"{folder_name}/vrt.vrt"
-        check_call(f"gdalbuildvrt -input_file_list {paths_file} {vrt}", shell=True)
-
-        # Mosaic it
+        # DEM
         dem = f"{folder_name}/dem.tif"
         check_call(
-            f"""gdalwarp \
-                -t_srs EPSG:4326 \
-                -co COMPRESS=ZSTD \
-                -te {bounds[0]} {bounds[1]} {bounds[2]} {bounds[3]} \
-                {vrt} \
-                {dem}
+            f"""gdal raster mosaic \
+                --bbox={bounds[0]},{bounds[1]},{bounds[2]},{bounds[3]} \
+                --of=COG \
+                --co="COMPRESS=ZSTD" \
+                -i @{paths_file} \
+                -o {dem}
             """,
             shell=True,
         )
@@ -112,30 +108,19 @@ def create_color_relief(bounds: tuple[float, float, float, float], id: str) -> s
     dem = get_dem(bounds, id, folder.name)
     colored = f"{folder.name}/colored.tif"
     check_call(
-        f"""gdaldem color-relief \
-            -of GTiff \
-            -alpha \
-            {dem} \
-            {color_file} \
-            {colored}
-        """,
-        shell=True,
-    )
-
-    cog = f"{folder.name}/colored_cog.tif"
-    check_call(
-        f"""gdalwarp \
-            -of COG \
-            -co COMPRESS=ZSTD \
-            {colored} \
-            {cog}
+        f"""gdal raster color-map \
+            --of=COG \
+            --co="COMPRESS=ZSTD" \
+            --color-map={color_file} \
+            -i {dem} \
+            -o {colored}
         """,
         shell=True,
     )
 
     # Upload it
     check_call(
-        f"gcloud storage cp {cog} gs://gee-ramiqcom-s4g-bucket/basemap/color_relief/NASADEM_Color-Relief_{id}.tif",
+        f"gcloud storage cp {colored} gs://gee-ramiqcom-s4g-bucket/basemap/color_relief/NASADEM_Color-Relief_{id}.tif",
         shell=True,
     )
 

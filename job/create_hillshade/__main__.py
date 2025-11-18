@@ -42,16 +42,16 @@ def get_dem(
     logger.info("Generating DEM")
     dem_info = json.loads(
         check_output(
-            f"""ogrinfo \
-                -spat {bounds[0]} {bounds[1]} {bounds[2]} {bounds[3]} \
-                -json \
-                -features \
-                /vsicurl/https://storage.googleapis.com/gee-ramiqcom-s4g-bucket/collection_tiles/nasadem_tiles.fgb
+            f"""gdal vector pipeline \
+                ! read /vsicurl/https://storage.googleapis.com/gee-ramiqcom-s4g-bucket/collection_tiles/nasadem_tiles.fgb \
+                ! filter --bbox={bounds[0]},{bounds[1]},{bounds[2]},{bounds[3]} \
+                ! info -f json --features
             """,
             shell=True,
             text=True,
         )
     )
+
     dem_tiles = dem_info["layers"][0]["features"]
 
     if len(dem_tiles) > 0:
@@ -61,26 +61,20 @@ def get_dem(
             for tile in dem_tiles
         ]
 
-        folder = TemporaryDirectory(delete=False)
-
         # save input
         paths_file = f"{folder_name}/paths.txt"
         with open(paths_file, "w") as file:
             file.write("\n".join(dem_paths))
 
-        # vrt
-        vrt = f"{folder_name}/vrt.vrt"
-        check_call(f"gdalbuildvrt input_file_list {paths_file} {vrt}", shell=True)
-
-        # Mosaic it
+        # DEM
         dem = f"{folder_name}/dem.tif"
         check_call(
-            f"""gdalwarp \
-                -t_srs EPSG:4326 \
-                -co COMPRESS=ZSTD \
-                -te {bounds[0]} {bounds[1]} {bounds[2]} {bounds[3]} \
-                {vrt} \
-                {dem}
+            f"""gdal raster mosaic \
+                --bbox={bounds[0]},{bounds[1]},{bounds[2]},{bounds[3]} \
+                --of=COG \
+                --co="COMPRESS=ZSTD" \
+                -i @{paths_file} \
+                -o {dem}
             """,
             shell=True,
         )
@@ -95,33 +89,25 @@ def create_hillshade(bounds: tuple[float, float, float, float], id: str) -> str:
 
     folder = TemporaryDirectory(delete=False)
 
-    dem = get_dem(bounds, id)
+    dem = get_dem(bounds, id, folder.name)
     hillshade = f"{folder.name}/hillshade.tif"
     check_call(
-        f"""gdaldem hillshade \
+        f"""gdal raster hillshade \
             -z 10 \
-            -s 111120 \
-            -multidirectional \
-            {dem} \
-            {hillshade}
-        """,
-        shell=True,
-    )
-
-    cog = f"{folder.name}/hillshade_cog.tif"
-    check_call(
-        f"""gdalwarp \
-            -of COG \
-            -co COMPRESS=ZSTD \
-            {hillshade} \
-            {cog}
+            --xscale=111120 \
+            --yscale=111120 \
+            --variant=multidirectional \
+            --of=COG \
+            --co="COMPRESS=ZSTD" \
+            -i {dem} \
+            -o {hillshade}
         """,
         shell=True,
     )
 
     # Upload it
     check_call(
-        f"gcloud storage cp {cog} gs://gee-ramiqcom-s4g-bucket/basemap/hillshade/NASADEM_Hillshade_{id}.tif",
+        f"gcloud storage cp {hillshade} gs://gee-ramiqcom-s4g-bucket/basemap/hillshade/NASADEM_Hillshade_{id}.tif",
         shell=True,
     )
 
