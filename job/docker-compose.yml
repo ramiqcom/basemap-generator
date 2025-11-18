@@ -1,0 +1,4 @@
+services:
+  create_basemap:
+    build: .
+    command: [".venv/bin/python", "-m", "create_basemap"]
