@@ -109,6 +109,7 @@ def create_color_relief(bounds: tuple[float, float, float, float], id: str) -> s
     colored = f"{folder.name}/colored.tif"
     check_call(
         f"""gdal raster color-map \
+            --add-alpha \
             --of=COG \
             --co="COMPRESS=ZSTD" \
             --color-map={color_file} \
